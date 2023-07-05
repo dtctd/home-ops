@@ -1,0 +1,49 @@
+---
+- name: Provision VM
+  block:
+    - name: Plan exists
+      stat:
+        path: "/opt/vm-config/terraform/{{ item.uuid }}.tf"
+      register: plan_exists
+
+    - name: ssh exists
+      stat:
+        path: "/opt/vm-config/ssh/{{ item.uuid }}.pub"
+      register: ssh_exists
+
+    - shell: cat /opt/vm-config/ssh/{{ item.uuid }}.pub
+      register: ssh_public_key_result
+      when: ssh_exists.stat.exists
+
+    - name: create ssh environment
+      file:
+        path: /opt/vm-config/ssh
+        state: directory
+        mode: '0777'
+
+    - name: generate ssh key
+      shell: ssh-keygen -t rsa -b 4096 -f /opt/vm-config/ssh/{{ item.uuid }} -P ""
+      when: not ssh_exists.stat.exists and item.state == "present"
+      become: false
+
+    - shell: cat /opt/vm-config/ssh/{{ item.uuid }}.pub
+      register: ssh_public_key_result
+
+    - name: create terraform plan file
+      template:
+        src: plan.tf.j2
+        dest: "/opt/vm-config/terraform/{{ item.uuid }}.tf"
+        owner: root
+        group: root
+        mode: '0644'
+      when: not plan_exists.stat.exists and item.state == "present"
+
+    - name: terraform apply
+      shell: terraform apply --auto-approve --target proxmox_vm_qemu.{{ item.uuid }}
+      args:
+        chdir: /opt/vm-config/terraform
+      loop: "{{ item.nodes }}"
+      loop_control:
+        loop_var: _item
+        index_var: idx
+      when: not plan_exists.stat.exists and item.state == "present"

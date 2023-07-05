@@ -33,7 +33,7 @@ main() {
         verify_cluster_service_cidrs
         verify_age
         verify_git_repository
-        verify_cloudflare
+        #verify_cloudflare
         verify_success
     else
         # generate sops configuration file
@@ -186,9 +186,9 @@ verify_kubevip() {
 
 verify_lbs() {
     #TODO: Validate IPs aren't already in use with arp
-    _has_envar "BOOTSTRAP_K8S_GATEWAY_ADDR"
+    _has_envar "BOOTSTRAP_K3S_GATEWAY_ADDR"
     _has_envar "BOOTSTRAP_INGRESS_NGINX_ADDR"
-    _has_valid_ip "${BOOTSTRAP_K8S_GATEWAY_ADDR}" "BOOTSTRAP_K8S_GATEWAY_ADDR"
+    _has_valid_ip "${BOOTSTRAP_K3S_GATEWAY_ADDR}" "BOOTSTRAP_K3S_GATEWAY_ADDR"
     _has_valid_ip "${BOOTSTRAP_INGRESS_NGINX_ADDR}" "BOOTSTRAP_INGRESS_NGINX_ADDR"
 }
 
@@ -293,8 +293,8 @@ verify_ansible_hosts() {
             _log "ERROR(${FUNCNAME[0]})" "The kube-vip IP '${BOOTSTRAP_KUBE_VIP_ADDR}' should not be the same as the IP for node '${!node_addr}'"
             exit 1
         fi
-        if [[ "${!node_addr}" == "${BOOTSTRAP_K8S_GATEWAY_ADDR}" ]]; then
-            _log "ERROR(${FUNCNAME[0]})" "The k8s-gateway load balancer IP '${BOOTSTRAP_K8S_GATEWAY_ADDR}' should not be the same as the IP for node '${!node_addr}'"
+        if [[ "${!node_addr}" == "${BOOTSTRAP_K3S_GATEWAY_ADDR}" ]]; then
+            _log "ERROR(${FUNCNAME[0]})" "The K3S-gateway load balancer IP '${BOOTSTRAP_K3S_GATEWAY_ADDR}' should not be the same as the IP for node '${!node_addr}'"
             exit 1
         fi
         if [[ "${!node_addr}" == "${BOOTSTRAP_INGRESS_NGINX_ADDR}" ]]; then
@@ -326,8 +326,8 @@ generate_ansible_host_secrets() {
     local node_password=
     local node_hostname=
     local node_control=
-    default_control_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_CONTROL_NODE_HOSTNAME_PREFIX:-k8s-}
-    default_worker_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_NODE_HOSTNAME_PREFIX:-k8s-}
+    default_control_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_CONTROL_NODE_HOSTNAME_PREFIX:-K3S-}
+    default_worker_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_NODE_HOSTNAME_PREFIX:-K3S-}
     for var in "${!BOOTSTRAP_ANSIBLE_HOST_ADDR_@}"; do
         node_id=$(echo "${var}" | awk -F"_" '{print $5}')
         node_control="BOOTSTRAP_ANSIBLE_CONTROL_NODE_${node_id}"
@@ -348,27 +348,64 @@ generate_ansible_host_secrets() {
                 node_hostname=${!node_hostname}
             fi
         fi
-        {
-            node_username="BOOTSTRAP_ANSIBLE_SSH_USERNAME_${node_id}"
-            node_password="BOOTSTRAP_ANSIBLE_SUDO_PASSWORD_${node_id}"
-            printf "kind: Secret\n"
-            printf "ansible_user: %s\n" "${!node_username}"
-            printf "ansible_become_pass: %s\n" "${!node_password}"
-        } > "${PROJECT_DIR}/ansible/inventory/host_vars/${node_hostname}.sops.yml"
+        if [[ $node_hostname == k3s* ]]; then
+          {
+              node_username="BOOTSTRAP_ANSIBLE_SSH_USERNAME_${node_id}"
+              node_password="BOOTSTRAP_ANSIBLE_SUDO_PASSWORD_${node_id}"
+              printf "kind: Secret\n"
+              printf "ansible_user: %s\n" "${!node_username}"
+              printf "ansible_become_pass: %s\n" "${!node_password}"
+          } > "${PROJECT_DIR}/ansible/inventory/host_vars/${node_hostname}.sops.yml"
+        else
+          {
+              node_username="BOOTSTRAP_ANSIBLE_SSH_USERNAME_${node_id}"
+              node_password="BOOTSTRAP_ANSIBLE_SUDO_PASSWORD_${node_id}"
+              node_api_endpoint="BOOTSTRAP_PVE_API_ENDPOINT"
+              node_pve_api_token_id="BOOTSTRAP_PVE_API_TOKEN_ID"
+              node_pve_api_secret="BOOTSTRAP_PVE_API_SECRET"
+              node_pve_api_password="BOOTSTRAP_PVE_API_PASSWORD"
+              node_pve_ssh_public_key="BOOTSTRAP_PVE_SSH_PUBLIC_KEY"
+              node_pve_ssh_private_key_path="BOOTSTRAP_PVE_SSH_PRIVATE_KEY_PATH"
+              node_pve_ansible_user="BOOTSTRAP_PVE_ANSIBLE_USER"
+              node_pve_ansible_pass="BOOTSTRAP_PVE_ANSIBLE_PASS"
+              node_pve_host="BOOTSTRAP_PVE_HOST"
+              printf "kind: Secret\n"
+              printf "ansible_user: %s\n" "${!node_username}"
+              printf "ansible_become_pass: %s\n" "${!node_password}"
+              printf "pve_api_endpoint: %s\n" "${!node_api_endpoint}"
+              printf "pve_api_token_id: %s\n" "${!node_pve_api_token_id}"
+              printf "pve_api_secret: %s\n" "${!node_pve_api_secret}"
+              printf "pve_api_password: %s\n" "${!node_pve_api_password}"
+              printf "pve_ssh_public_key: %s\n" "${!node_pve_ssh_public_key}"
+              printf "pve_ssh_private_key_path: %s\n" "${!node_pve_ssh_private_key_path}"
+              printf "pve_ansible_user: %s\n" "${!node_pve_ansible_user}"
+              printf "pve_ansible_pass: %s\n" "${!node_pve_ansible_pass}"
+              printf "pve_host: %s\n" "${!node_pve_host}"
+
+          } > "${PROJECT_DIR}/ansible/inventory/host_vars/${node_hostname}.sops.yml"
+        fi
         sops --encrypt --in-place "${PROJECT_DIR}/ansible/inventory/host_vars/${node_hostname}.sops.yml"
     done
 }
 
 generate_ansible_hosts() {
     local worker_node_count=
-    default_control_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_CONTROL_NODE_HOSTNAME_PREFIX:-k8s-}
-    default_worker_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_NODE_HOSTNAME_PREFIX:-k8s-}
+    default_control_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_CONTROL_NODE_HOSTNAME_PREFIX:-K3S-}
+    default_worker_node_prefix=${BOOTSTRAP_ANSIBLE_DEFAULT_NODE_HOSTNAME_PREFIX:-K3S-}
     {
         printf -- "---\n"
-        printf "kubernetes:\n"
+        printf "all:\n"
         printf "  children:\n"
-        printf "    master:\n"
+        printf "    provision:\n"
+        #printf "      vars:\n"
+        #printf "        ansible_user: %s\n" "${BOOTSTRAP_PVE_ANSIBLE_USER}"
         printf "      hosts:\n"
+        printf "        pve:\n"
+        printf "          ansible_host: %s\n" "${BOOTSTRAP_PVE_HOST}"
+        printf "    kubernetes:\n"
+        printf "      children:\n"
+        printf "        master:\n"
+        printf "          hosts:\n"
         master_node_count=0
         worker_node_count=0
         for var in "${!BOOTSTRAP_ANSIBLE_HOST_ADDR_@}"; do
@@ -383,15 +420,17 @@ generate_ansible_hosts() {
                 else
                     node_hostname=${!node_hostname}
                 fi
-                printf "        %s:\n" "${node_hostname}"
-                printf "          ansible_host: %s\n" "${!var}"
+                if  [[ $node_hostname == k3s* ]]; then
+                  printf "            %s:\n" "${node_hostname}"
+                  printf "              ansible_host: %s\n" "${!var}"
+                fi
             else
                 worker_node_count=$((worker_node_count+1))
             fi
         done
         if [[ ${worker_node_count} -gt 0 ]]; then
-            printf "    worker:\n"
-            printf "      hosts:\n"
+            printf "        worker:\n"
+            printf "          hosts:\n"
             for var in "${!BOOTSTRAP_ANSIBLE_HOST_ADDR_@}"; do
                 node_id=$(echo "${var}" | awk -F"_" '{print $5}')
                 node_control="BOOTSTRAP_ANSIBLE_CONTROL_NODE_${node_id}"
@@ -403,8 +442,10 @@ generate_ansible_hosts() {
                     else
                         node_hostname=${!node_hostname}
                     fi
-                    printf "        %s:\n" "${node_hostname}"
-                    printf "          ansible_host: %s\n" "${!var}"
+                    if  [[ $node_hostname == k3s* ]]; then
+                      printf "            %s:\n" "${node_hostname}"
+                      printf "              ansible_host: %s\n" "${!var}"
+                    fi
                 fi
             done
         fi

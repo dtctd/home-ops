@@ -1,0 +1,62 @@
+---
+upgrade_packages: false
+
+k3s_vm_config:
+  memory: 4096
+  cores: 2
+  disk_size: "20G"
+  data_disk_size: "10G"
+  disk_storage: "local-zfs"
+  username: "{{ pve_ansible_user }}"
+  password: "{{ pve_ansible_pass }}"
+  hagroup: ""
+
+pve_nodes:
+    - pve
+#  - pve-demo2
+#  - pve-demo3
+
+pve_credentials:
+  api_endpoint: "{{ pve_api_endpoint }}"
+  api_token_id: "{{ pve_api_token_id }}"
+  api_secret: "{{ pve_api_secret }}"
+  api_password: "{{ pve_api_endpoint }}"
+
+ssh_public_key: "{{ pve_ssh_public_key }}"
+ssh_private_key_path: "{{ pve_ssh_private_key_path }}"
+
+
+k3s:
+  - uuid: k3s-01
+    comments: master node
+    nodes:
+      - ip_gateway: 192.168.50.1
+        ip_address: 192.168.50.33
+        ip_cidr: 24
+    ctdb:
+      ip_address: 192.168.50.33
+      ip_cidr: 24
+    dns: 1.1.1.1
+    state: present
+  - uuid: k3s-02
+    comments: worker node
+    nodes:
+      - ip_gateway: 192.168.50.1
+        ip_address: 192.168.50.34
+        ip_cidr: 24
+    ctdb:
+      ip_address: 192.168.50.34
+      ip_cidr: 24
+    dns: 1.1.1.1
+    state: present
+  - uuid: k3s-03
+    comments: worker node
+    nodes:
+      - ip_gateway: 192.168.50.1
+        ip_address: 192.168.50.35
+        ip_cidr: 24
+    ctdb:
+      ip_address: 192.168.50.35
+      ip_cidr: 24
+    dns: 1.1.1.1
+    state: present

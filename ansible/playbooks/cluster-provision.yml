@@ -1,0 +1,14 @@
+---
+- name: Provision VMs
+  hosts: provision
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Pausing for 5 seconds...
+      ansible.builtin.pause:
+        seconds: 5
+  tasks:
+  - name: deploy files with network address in them
+    include_tasks: provision-vm.yml
+    loop: "{{ k3s }}"

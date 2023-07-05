@@ -1,0 +1,119 @@
+---
+- name: Proxmox Init
+  hosts: provision
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Pausing for 5 seconds...
+      ansible.builtin.pause:
+        seconds: 5
+  tasks:
+    block:
+      - name: install terraform dependancies
+        package:
+          name: "{{ item }}"
+          state: "{{ (upgrade_packages|bool) | ternary('latest','present') }}"
+        register: result
+        until: result is succeeded
+        with_items:
+          - gnupg
+          - software-properties-common
+          - curl
+          - libguestfs-tools
+
+      - name: add hashicorp gpg key
+        shell: curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+
+      - name: add hashicorp repo
+        shell: apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+
+      - name: update apt-get repo and cache
+        apt: update_cache=yes force_apt_get=yes
+
+      - name: install terraform dependancies
+        package:
+          name: "terraform"
+          state: "{{ (upgrade_packages|bool) | ternary('latest','present') }}"
+        register: result
+        until: result is succeeded
+
+      - name: create terraform environment
+        file:
+          path: /opt/vm-config/terraform
+          state: directory
+          mode: '0755'
+
+      - name: copy provider config
+        copy:
+          src: files/provider.tf
+          dest: /opt/vm-config/terraform/provider.tf
+          owner: root
+          group: root
+          mode: '0644'
+
+      - name: create terraform credentials file
+        template:
+          src: credentials.auto.tfvars.j2
+          dest: /opt/vm-config/terraform/credentials.auto.tfvars
+          owner: root
+          group: root
+          mode: '0644'
+
+      - name: init terraform
+        shell: terraform init
+        args:
+          chdir: /opt/vm-config/terraform
+
+      - name: create TerraformProv role in Proxmox
+        ansible.builtin.shell: pveum role add TerraformProv -privs "VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.Monitor VM.Audit VM.PowerMgmt Datastore.AllocateSpace Datastore.Audit"
+        ignore_errors: true
+
+      - name: create terraform-prov user in proxmox
+        ansible.builtin.shell: pveum user add terraform-prov@pve --password  {{ k3s_vm_config.password }}
+        ignore_errors: true
+      - name: change acl for terraform-prov user to TerreformProv role
+        ansible.builtin.shell: pveum aclmod / -user terraform-prov@pve -role TerraformProv
+
+      - name: Install Ubuntu template
+        block:
+          - name: Write /root/id_rsa.pub
+            copy:
+              dest: /root/id_rsa.pub
+              mode: 0644
+              content: |
+                {{ ssh_public_key }}
+
+          - name: Remove old img when present
+            file:
+              path: $HOME/jammy-server-cloudimg-amd64.img
+              state: absent
+          - name: Download new image file
+            ansible.builtin.get_url:
+              url: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+              dest: $HOME/jammy-server-cloudimg-amd64.img
+              mode: '0440'
+
+          - name: Install qemu guest agent in img
+            ansible.builtin.shell: virt-customize -a jammy-server-cloudimg-amd64.img --install qemu-guest-agent
+          #- name: Inject SSH pub key in img
+          #  ansible.builtin.shell: virt-customize -a jammy-server-cloudimg-amd64.img --ssh-inject root:file:/root/id_rsa.pub
+          - name: Destroy current template VM
+            ansible.builtin.shell: qm destroy 9999
+            ignore_errors: true
+          - name: Create new template
+            ansible.builtin.shell: qm create 9999 --name "ubuntu-cloud" --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0
+          - name: Import img to disk storage
+            ansible.builtin.shell: qm importdisk 9999 jammy-server-cloudimg-amd64.img {{ vm_config.disk_storage }}
+          - name: Configure hardware
+            ansible.builtin.shell: qm set 9999 --scsihw virtio-scsi-pci --virtio0 {{ vm_config.disk_storage }}:vm-9999-disk-0
+          - name: Configure bootdisk
+            ansible.builtin.shell: qm set 9999 --boot c --bootdisk virtio0
+          - name: Mount cloudinit disk
+            ansible.builtin.shell: qm set 9999 --ide2 {{ vm_config.disk_storage }}:cloudinit
+          - name: Configure serial console connection
+            ansible.builtin.shell: qm set 9999 --serial0 socket --vga serial0
+          - name: Enable agent
+            ansible.builtin.shell: qm set 9999 --agent enabled=1
+          - name: Convert to template
+            ansible.builtin.shell: qm template 9999
