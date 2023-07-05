@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 data:
   TIMEZONE: "Europe/Amsterdam"
-  K3S_GATEWAY_ADDR: ""
+  K3S_GATEWAY_ADDR: "192.168.50.30"
   INGRESS_NGINX_ADDR: "192.168.50.31"
   KUBE_VIP_ADDR: "192.168.50.32"
   CLUSTER_CIDR: "10.42.0.0/16"
